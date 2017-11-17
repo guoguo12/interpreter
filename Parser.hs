@@ -1,6 +1,6 @@
 module Parser (AST (..), parse) where
 
-import Control.Monad.Trans.State
+import Control.Monad.Trans.State (State, evalState, get, put)
 import Lexer (tokenize)
 
 numericChars = "0123456789"
