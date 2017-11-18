@@ -1,3 +1,5 @@
+{-# LANGUAGE Rank2Types #-}
+
 import Control.Exception (SomeException, catch)
 import Control.Monad (forever)
 import Control.Monad.Trans.Reader (Reader, runReader, ask, local)
@@ -7,6 +9,7 @@ import Lexer (tokenize)
 import Parser (AST (..), parse)
 
 data Expr = NilExpr
+          | BoolExpr Bool
           | NumExpr Int
           | StrExpr String
           | PairExpr Expr Expr
@@ -14,6 +17,7 @@ data Expr = NilExpr
 
 instance Show Expr where
     show NilExpr          = "()"
+    show (BoolExpr b)     = if b then "#t" else "#f"
     show (NumExpr n)      = show n
     show (StrExpr s)      = "\"" ++ s ++ "\""
     show (PairExpr p1 p2) = "(" ++ (show p1) ++ " . " ++ (show p2) ++ ")"
@@ -23,21 +27,42 @@ type Env = Map String Expr
 
 globalEnv :: Env
 globalEnv = fromList
-    [ ("+", makeMathFn2 (+))
-    , ("-", makeMathFn2 (-))
-    , ("*", makeMathFn2 (*))
-    , ("/", makeMathFn2 quot)
-    , ("min", makeMathFn2 min)
-    , ("max", makeMathFn2 max)
-    , ("nil", NilExpr)
+    [ ("+",    arithmeticPrim (+))
+    , ("-",    arithmeticPrim (-))
+    , ("*",    arithmeticPrim (*))
+    , ("/",    arithmeticPrim quot)
+    , ("min",  arithmeticPrim min)
+    , ("max",  arithmeticPrim max)
+    , ("=",    equalityPrim (==))
+    , ("!=",   equalityPrim (/=))
+    , ("<",    comparisonPrim (<))
+    , ("<=",   comparisonPrim (<=))
+    , (">",    comparisonPrim (>))
+    , (">=",   comparisonPrim (>=))
+    , ("nil",  NilExpr)
+    , ("#t",   BoolExpr True)
+    , ("#f",   BoolExpr False)
     , ("cons", consFn)
     ]
 
-makeMathFn2 :: (Int -> Int -> Int) -> Expr
-makeMathFn2 mathFn = FnExpr f
-    where f [NumExpr n1, NumExpr n2] = return $ NumExpr $ mathFn n1 n2
-          f [_, _]                   = error "Type mismatch (math function)"
-          f _                        = error "Arity mismatch (math function)"
+arithmeticPrim :: (Int -> Int -> Int) -> Expr
+arithmeticPrim fn = FnExpr f
+    where f [NumExpr n1, NumExpr n2] = return $ NumExpr $ fn n1 n2
+          f [_, _]                   = error "Type mismatch (arithmetic fn.)"
+          f _                        = error "Arity mismatch (arithmetic fn.)"
+
+equalityPrim :: (forall a. Eq a => a -> a -> Bool) -> Expr
+equalityPrim fn = FnExpr f
+    where f [NumExpr n1, NumExpr n2]   = return $ BoolExpr $ fn n1 n2
+          f [BoolExpr b1, BoolExpr b2] = return $ BoolExpr $ fn b1 b2
+          f [_, _]                     = error "Type mismatch (equality fn.)"
+          f _                          = error "Arity mismatch (equality fn.)"
+
+comparisonPrim :: (Int -> Int -> Bool) -> Expr
+comparisonPrim fn = FnExpr f
+    where f [NumExpr n1, NumExpr n2] = return $ BoolExpr $ fn n1 n2
+          f [_, _]                   = error "Type mismatch (comparison fn.)"
+          f _                        = error "Arity mismatch (comparison fn.)"
 
 consFn :: Expr
 consFn = FnExpr f
@@ -56,6 +81,7 @@ eval (Node (x:xs)) =
     case x of
         (Symbol "let")    -> evalLet xs
         (Symbol "lambda") -> evalLambda xs
+        (Symbol "if")     -> evalIf xs
         _                 -> apply x xs
 
 evalLet :: [AST] -> Reader Env Expr
@@ -76,6 +102,15 @@ evalLambda [Node params, body] =
               f (_:_) [] = error "Arity mismatch (too few arguments)"
               f (Symbol param:otherParams) (arg:otherArgs) =
                   local (insert param arg) (f otherParams otherArgs)
+evalLambda _ = error "Invalid lambda syntax"
+
+evalIf :: [AST] -> Reader Env Expr
+evalIf [condExpr, thenExpr, elseExpr] = do
+    condExpr' <- eval condExpr
+    case condExpr' of
+        BoolExpr False -> eval elseExpr
+        _              -> eval thenExpr
+evalIf _ = error "Invalid if syntax"
 
 apply :: AST -> [AST] -> Reader Env Expr
 apply f args = do
