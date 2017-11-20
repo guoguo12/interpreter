@@ -121,7 +121,7 @@ evalLet _ = error "Invalid let syntax"
 evalLambda :: [AST] -> Reader Env Expr
 evalLambda [Node params, body] =
     if not $ checkParams params
-    then error "Parameter/identifier was not a symbol"
+    then error "Invalid parameter list for lambda"
     else return $ FnExpr (f params)
         where f [] []    = eval body
               f [] (_:_) = error "Arity mismatch (too many arguments)"
