@@ -20,8 +20,15 @@ instance Show Expr where
     show (BoolExpr b)     = if b then "#t" else "#f"
     show (NumExpr n)      = show n
     show (StrExpr s)      = "\"" ++ s ++ "\""
-    show (PairExpr p1 p2) = "(" ++ (show p1) ++ " . " ++ (show p2) ++ ")"
+    show (PairExpr p1 p2) = showPair p1 p2
     show (FnExpr _)       = "<function>"
+
+showPair :: Expr -> Expr -> String
+showPair p1 p2 = "(" ++ show p1 ++ rest ++ ")"
+    where rest = case p2 of
+            NilExpr      -> ""
+            PairExpr _ _ -> " " ++ (tail $ init $ show p2)
+            _            -> " . " ++ show p2
 
 type Env = Map String Expr
 
@@ -43,6 +50,9 @@ globalEnv = fromList
     , ("#t",   BoolExpr True)
     , ("#f",   BoolExpr False)
     , ("cons", consFn)
+    , ("car",  carFn)
+    , ("cdr",  cdrFn)
+    , ("list", listFn)
     ]
 
 arithmeticPrim :: (Int -> Int -> Int) -> Expr
@@ -68,6 +78,22 @@ consFn :: Expr
 consFn = FnExpr f
     where f [p1, p2] = return $ PairExpr p1 p2
           f _        = error "Arity mismatch (cons)"
+
+carFn :: Expr
+carFn = FnExpr f
+    where f [(PairExpr p1 _)] = return p1
+          f [_]               = error "Type mismatch (car)"
+          f _                 = error "Arity mismatch (car)"
+
+cdrFn :: Expr
+cdrFn = FnExpr f
+    where f [(PairExpr _ p2)] = return p2
+          f [_]               = error "Type mismatch (cdr)"
+          f _                 = error "Arity mismatch (cdr)"
+
+listFn :: Expr
+listFn = FnExpr f
+    where f xs = return $ foldr PairExpr NilExpr xs
 
 eval :: AST -> Reader Env Expr
 eval (Number n) = return $ NumExpr n
