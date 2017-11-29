@@ -13,7 +13,8 @@ data Expr = NilExpr
           | NumExpr Int
           | StrExpr String
           | PairExpr Expr Expr
-          | FnExpr ([Expr] -> Reader Env Expr)
+          | LambdaExpr ([Expr] -> Expr)
+          | MuExpr ([Expr] -> Reader Env Expr)
 
 instance Show Expr where
     show NilExpr          = "()"
@@ -21,7 +22,8 @@ instance Show Expr where
     show (NumExpr n)      = show n
     show (StrExpr s)      = "\"" ++ s ++ "\""
     show (PairExpr p1 p2) = showPair p1 p2
-    show (FnExpr _)       = "<function>"
+    show (LambdaExpr _)   = "<#closure>"
+    show (MuExpr _)       = "<#dynamic>"
 
 showPair :: Expr -> Expr -> String
 showPair p1 p2 = "(" ++ show p1 ++ rest ++ ")"
@@ -56,44 +58,43 @@ globalEnv = fromList
     ]
 
 arithmeticPrim :: (Int -> Int -> Int) -> Expr
-arithmeticPrim fn = FnExpr f
-    where f [NumExpr n1, NumExpr n2] = return $ NumExpr $ fn n1 n2
+arithmeticPrim fn = LambdaExpr f
+    where f [NumExpr n1, NumExpr n2] = NumExpr $ fn n1 n2
           f [_, _]                   = error "Type mismatch (arithmetic fn.)"
           f _                        = error "Arity mismatch (arithmetic fn.)"
 
 equalityPrim :: (forall a. Eq a => a -> a -> Bool) -> Expr
-equalityPrim fn = FnExpr f
-    where f [NumExpr n1, NumExpr n2]   = return $ BoolExpr $ fn n1 n2
-          f [BoolExpr b1, BoolExpr b2] = return $ BoolExpr $ fn b1 b2
+equalityPrim fn = LambdaExpr f
+    where f [NumExpr n1, NumExpr n2]   = BoolExpr $ fn n1 n2
+          f [BoolExpr b1, BoolExpr b2] = BoolExpr $ fn b1 b2
           f [_, _]                     = error "Type mismatch (equality fn.)"
           f _                          = error "Arity mismatch (equality fn.)"
 
 comparisonPrim :: (Int -> Int -> Bool) -> Expr
-comparisonPrim fn = FnExpr f
-    where f [NumExpr n1, NumExpr n2] = return $ BoolExpr $ fn n1 n2
+comparisonPrim fn = LambdaExpr f
+    where f [NumExpr n1, NumExpr n2] = BoolExpr $ fn n1 n2
           f [_, _]                   = error "Type mismatch (comparison fn.)"
           f _                        = error "Arity mismatch (comparison fn.)"
 
 consFn :: Expr
-consFn = FnExpr f
-    where f [p1, p2] = return $ PairExpr p1 p2
+consFn = LambdaExpr f
+    where f [p1, p2] = PairExpr p1 p2
           f _        = error "Arity mismatch (cons)"
 
 carFn :: Expr
-carFn = FnExpr f
-    where f [(PairExpr p1 _)] = return p1
+carFn = LambdaExpr f
+    where f [(PairExpr p1 _)] = p1
           f [_]               = error "Type mismatch (car)"
           f _                 = error "Arity mismatch (car)"
 
 cdrFn :: Expr
-cdrFn = FnExpr f
-    where f [(PairExpr _ p2)] = return p2
+cdrFn = LambdaExpr f
+    where f [(PairExpr _ p2)] = p2
           f [_]               = error "Type mismatch (cdr)"
           f _                 = error "Arity mismatch (cdr)"
 
 listFn :: Expr
-listFn = FnExpr f
-    where f xs = return $ foldr PairExpr NilExpr xs
+listFn = LambdaExpr (foldr PairExpr NilExpr)
 
 eval :: AST -> Reader Env Expr
 eval (Number n) = return $ NumExpr n
@@ -107,6 +108,7 @@ eval (Node (x:xs)) =
     case x of
         (Symbol "let")    -> evalLet xs
         (Symbol "lambda") -> evalLambda xs
+        (Symbol "mu")     -> evalMu xs
         (Symbol "if")     -> evalIf xs
         _                 -> apply x xs
 
@@ -122,13 +124,27 @@ evalLambda :: [AST] -> Reader Env Expr
 evalLambda [Node params, body] =
     if not $ checkParams params
     then error "Invalid parameter list for lambda"
-    else return $ FnExpr (f params)
+    else do
+        env <- ask
+        return $ LambdaExpr (f env params)
+            where f env [] []    = runReader (eval body) env
+                  f _   [] (_:_) = error "Arity mismatch (too many arguments)"
+                  f _   (_:_) [] = error "Arity mismatch (too few arguments)"
+                  f env (Symbol param:otherParams) (arg:otherArgs) =
+                      f (insert param arg env) otherParams otherArgs
+evalLambda _ = error "Invalid lambda syntax"
+
+evalMu :: [AST] -> Reader Env Expr
+evalMu [Node params, body] =
+    if not $ checkParams params
+    then error "Invalid parameter list for mu"
+    else return $ MuExpr (f params)
         where f [] []    = eval body
               f [] (_:_) = error "Arity mismatch (too many arguments)"
               f (_:_) [] = error "Arity mismatch (too few arguments)"
               f (Symbol param:otherParams) (arg:otherArgs) =
                   local (insert param arg) (f otherParams otherArgs)
-evalLambda _ = error "Invalid lambda syntax"
+evalMu _ = error "Invalid mu syntax"
 
 evalIf :: [AST] -> Reader Env Expr
 evalIf [condExpr, thenExpr, elseExpr] = do
@@ -143,8 +159,9 @@ apply f args = do
     f'    <- eval f
     args' <- mapM eval args
     case f' of
-        FnExpr fn -> fn args'
-        _         -> error "Non-function cannot be applied"
+        LambdaExpr fn -> return $ fn args'
+        MuExpr fn     -> fn args'
+        _             -> error "Non-function cannot be applied"
 
 checkParams :: [AST] -> Bool
 checkParams = all isSymbol
