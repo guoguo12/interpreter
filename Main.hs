@@ -4,6 +4,7 @@ import Control.Exception (SomeException, catch)
 import Control.Monad (forever)
 import Control.Monad.Trans.Reader (Reader, runReader, ask, local)
 import Data.Map (Map, fromList, insert, lookup)
+import System.Console.Readline (addHistory, readline)
 import System.IO (hFlush, stdout)
 import Lexer (tokenize)
 import Parser (AST (..), parse)
@@ -168,10 +169,15 @@ checkParams = all isSymbol
     where isSymbol (Symbol _) = True
           isSymbol _          = False
 
-main = forever $ do
-    putStr "> "
-    hFlush stdout
-    input <- getLine
-    let ast = parse $ tokenize (input ++ "\n")
-    catch (putStrLn $ show $ runReader (eval ast) globalEnv)
-          (\e -> putStrLn $ show (e :: SomeException))
+main :: IO ()
+main = do
+    input <- readline "> "
+    case input of
+        Nothing   -> return ()
+        Just line -> do
+            addHistory line
+            let tokens = tokenize (line ++ "\n")
+            let ast = parse tokens
+            catch (putStrLn $ show $ runReader (eval ast) globalEnv)
+                  (\e -> putStrLn $ show (e :: SomeException))
+            main
