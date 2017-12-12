@@ -56,6 +56,7 @@ globalEnv = fromList
     , ("car",  carFn)
     , ("cdr",  cdrFn)
     , ("list", listFn)
+    , ("null?", nullFn)
     ]
 
 arithmeticPrim :: (Int -> Int -> Int) -> Expr
@@ -96,6 +97,11 @@ cdrFn = LambdaExpr f
 
 listFn :: Expr
 listFn = LambdaExpr (foldr PairExpr NilExpr)
+
+nullFn :: Expr
+nullFn = LambdaExpr f
+    where f [NilExpr] = BoolExpr True
+          f _         = BoolExpr False
 
 eval :: AST -> Reader Env Expr
 eval (Number n) = return $ NumExpr n
